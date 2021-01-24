@@ -1,0 +1,5 @@
+/etc/X11/xkb
+/etc/.fstab
+/dev
+/etc/X11
+/cmdline.txt

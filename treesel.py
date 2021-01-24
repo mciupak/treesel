@@ -15,6 +15,8 @@ ESC = 27
 result = ''
 start = '.'
 show_hidden = False
+exclude = False
+show_files = False
 
 
 ################################################################################
@@ -34,19 +36,38 @@ def list_dir_only(d):
 
     return sorted(sds)
 
+class File:
+    def __init__(self, name):
+        self.name = name
+        self.selected = False
+    def render(self, depth, width):
+        return pad('%s%s %s' % (' ' * 4 * depth, self.icon(),
+                                os.path.basename(self.name)), width)
+    def icon(self):
+        if self.selected:
+            return ' * '
+        return '   '
+    def traverse(self): yield self, 0
+    def expand(self): pass
+    def collapse(self): pass
 
 ################################################################################
 class Dir(object):
-    # ==========================================================================
+# ==========================================================================
     def __init__(self, name):
-        # File.__init__(self, name)
         self.name = name
+        if show_files:
+            File.__init__(self, name)
         try:
-            self.kidnames = list_dir_only(name)
+            if show_files:
+                self.kidnames = sorted(os.listdir(name))
+            else:
+                self.kidnames = list_dir_only(name)
         except:
             self.kidnames = None  # probably permission denied
         self.kids = None
         self.expanded = False
+        self.selected = False
 
     # ==========================================================================
     def render(self, depth, width):
@@ -63,7 +84,9 @@ class Dir(object):
 
     # ==========================================================================
     def icon(self):
-        if self.expanded:
+        if self.selected:
+            return '[*]'
+        elif self.expanded:
             return '[-]'
         elif self.kidnames is None:
             return '[?]'
@@ -91,7 +114,10 @@ class Dir(object):
 
 ################################################################################
 def factory(name):
-    return Dir(name)
+    if not show_files or os.path.isdir(name):
+        return Dir(name)
+    else:
+        return File(name)
 
 ################################################################################
 def c_main(stdscr):
@@ -102,6 +128,8 @@ def c_main(stdscr):
     curidx = 3
     pending_action = None
     pending_save = False
+    space = False
+    excluded = set()
 
     while True:
         stdscr.clear()
@@ -110,14 +138,25 @@ def c_main(stdscr):
         offset = max(0, curidx - curses.LINES + 3)
         for data, depth in mydir.traverse():
             if line == curidx:
+                global result
                 stdscr.attrset(curses.color_pair(1) | curses.A_BOLD)
                 if pending_action:
                     getattr(data, pending_action)()
                     pending_action = None
                 elif pending_save:
-                    global result
-                    result = data.name
+                    if exclude:
+                        result = excluded
+                    else:
+                        result = data.name
                     return
+                elif space:
+                    space = False
+                    data.selected = not data.selected
+                    if data.selected:
+                        excluded.add(data.name)
+                    else:
+                        excluded.remove(data.name)
+
             else:
                 stdscr.attrset(curses.color_pair(0))
             if 0 <= line - offset < curses.LINES - 1:
@@ -144,6 +183,8 @@ def c_main(stdscr):
             return
         elif ch == ord('\n'):
             pending_save = True
+        elif ch == ord(' '):
+            space = True
 
         curidx %= line
 
@@ -191,6 +232,8 @@ usage: {0} [options] query_string
   options are:
     -h, --help : show this message
     -s, --show_hidden : show hidden directory
+    -f, --show_files : show directories and files
+    -e, --exclude : generate exclude.txt with files and directories selected by space key
 '''.format(sys.argv[0]))
     sys.exit(1)
 
@@ -199,17 +242,23 @@ usage: {0} [options] query_string
 def main():
     global start
     global show_hidden
+    global exclude
+    global show_files
     saved_fds = (os.dup(0), os.dup(1))
     try:
         opts, args = getopt.getopt(
-            sys.argv[1:], "hs",
-            ["help", "show_hidden"]
+            sys.argv[1:], "hsfe",
+            ["help", "show_hidden", "show_files", "exclude"]
         )
         for o, a in opts:
             if o in ("-h", "--help"):
                 usage()
             elif o in ("-s", "--show_hidden"):
                 show_hidden = True
+            elif o in ("-f", "--show_files"):
+                show_files = True
+            elif o in ("-e", "--exclude"):
+                exclude = True
         if len(args) > 0:
             start = args[0]
         if not os.path.isdir(start):
@@ -218,7 +267,12 @@ def main():
         saved_fds = open_tty()
         wrapper(c_main)
         restore_stdio(*saved_fds)
-        print(result)
+        if exclude:
+            with open('exclude.txt', 'w') as f:
+                for r in result:
+                    f.write("{}\n".format(r))
+        else:
+            print(result)
     except Exception as e:
         restore_stdio(*saved_fds)
         usage(str(e))
